@@ -72,8 +72,11 @@ void ser_write(int fd, uint8_t *stream, uint16_t sz) {
 	int ret, ct;
 	uint8_t c;
 	TRACE_MSG;
-
+	tcdrain(fd);
 	// Write out one byte at a time
+#ifdef DEBUG_PRINT
+		printf("ser_write: ");
+#endif	
 	for(ct=0; ct<sz; ct++) {
 #ifdef DEBUG_PRINT
 		printf("0x%02X ", stream[ct]);
@@ -89,6 +92,7 @@ void ser_write(int fd, uint8_t *stream, uint16_t sz) {
 #ifdef DEBUG_PRINT
 	printf("\n");
 #endif
+	tcdrain(fd);
 	return;
 }
 
@@ -96,9 +100,12 @@ void ser_write(int fd, uint8_t *stream, uint16_t sz) {
 void ser_cmd(int fd, int cmd) {
 	uint8_t ccmd = cmd;	
 	TRACE_MSG;
+#ifdef DEBUG_PRINT
+	printf("bp_cmd: ");
+#endif
 	ser_write(fd, &ccmd, 1);
 	// Delay for the hardware to respond
-	usleep(10000);
+	usleep(1000);
 	return;
 }
 
@@ -133,15 +140,15 @@ void ser_bp_exit_bin(int fd) {
 	int ret, count;
 	uint8_t buf;
 	TRACE_MSG;
-
 	// Make sure we're in the BBIO and not anywhere else
 	ser_bp_bin(fd);
 
 	// Reset to normal mode
 	for(count=0; count<25; count++) {
 		// Reset the BP
+		tcdrain(fd);
+		tcflush(fd, TCIOFLUSH);
 		ser_cmd(fd, BP_RESET);
-
 		// Check that we got the reset response
 		ret = read(fd, &buf, 1);
 #ifdef DEBUG_PRINT
@@ -160,9 +167,10 @@ void check_resp(int fd, char *err) {
 	int ret, ct = 0;
 	uint8_t buf;
 	TRACE_MSG;
-
+	//tcdrain(fd);
+	///usleep(10);
 	// Check up to 25 times for a response
-	while(ct < 25) {
+	while(ct < 50) {
 		ret = read(fd, &buf, 1);
 		if(ret != -1)
 			break;
@@ -171,19 +179,19 @@ void check_resp(int fd, char *err) {
 		ct++;
 	}
 #ifdef DEBUG_PRINT
-	printf("Response: 0x%X (%c)\n", buf, buf);
+	printf("check_resp: 0x%X (%c)\n", buf, buf);
 #endif
 	if(buf != BP_RESP_SUCCESS) {
 		// Try to set the bus pirate back to normal mode
+		printf("check_resp: %s failed\nSetting BP back to normal.\n", err);
 		ser_bp_exit_bin(fd);
 		// Close the connection
 		ser_close(fd);
-		printf("%s failed\n", err);
 		exit(-1);
 	} 
-#ifdef DEBUF_PRINT
+#ifdef DEBUG_PRINT
 	else {
-		printf("%s succeeded\n", err);
+		printf("check_resp: %s succeeded\n", err);
 	}
 #endif
 	return;
@@ -219,7 +227,7 @@ void ser_bp_spi_cfg(int fd) {
 		check_resp(fd, "SPI Turn off the AUX pin");
 	
 		// Turn on the AUX pin to release the chip from reset
-		ser_cmd(fd, BP_SPI_PERF((BP_SPI_PERF_POWER | BP_SPI_PERF_AUX)));
+		ser_cmd(fd, BP_SPI_PERF((BP_SPI_PERF_POWER | BP_SPI_PERF_AUX | BP_SPI_PERF_CS)));
 		check_resp(fd, "SPI Turn on AUX pin");
 	}
 	
@@ -322,7 +330,6 @@ void spi_cmd(int fd, uint8_t *cmd, int cmd_len, char *err) {
 	uint16_t write_bytes, read_bytes;
 	uint8_t b[2];
 	TRACE_MSG;
-	
 	// Initiate the WR_RD operation
 	ser_cmd(fd, BP_SPI_WR_RD);	
 
@@ -343,9 +350,10 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	uint8_t bytes[3];
 	int pos, err_ct = 0;
 	TRACE_MSG;
-	
+	printf("spi_read: %s\n", err);
 	// Initiate the WR_RD operation
-	ser_cmd(fd, BP_SPI_WR_RD);
+	ser_cmd(fd, BP_SPI_CS(0));
+	ser_cmd(fd, BP_SPI_WR_RD_NO_CS);
 
 	// Send the read/write length and command bytes
 	s2b(write_bytes, bytes);
@@ -358,9 +366,12 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	// Delay for the response
-	check_resp(fd, "SPI Read");
-	
-	// Read in the data
+	ser_cmd(fd, BP_SPI_CS(1));
+
+	check_resp(fd, "SPI Read CS");
+	usleep(200000); // wait for bp spi read buffer
+	check_resp(fd, "SPI Read Start");
+
 #ifdef DEBUG_PRINT
 	printf("READ %i bytes\n", len);
 #endif
@@ -369,18 +380,23 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 		while(read(fd, &(buf[pos]), 1) != 1) {
 			usleep(1000);
 			err_ct++;	
-			if(err_ct > 25) {
+			if(err_ct > 1) {
 				printf("Unable to read!\n");
 				break;
 			}
 		}
 #ifdef DEBUG_PRINT
-		printf("0x%02X ", buf[pos]);
+		printf("%02X ", buf[pos]);
+		if (pos % 16 == 15) {
+			printf("\n");
+		}
 #endif
 	}
 #ifdef DEBUG_PRINT
 	printf("\n");
 #endif
+	check_resp(fd, "SPI Read Complete");
+
 
 	return;	
 }
@@ -392,19 +408,16 @@ void spi_wait(int fd, uint8_t *cmd, uint16_t len,  char *resp_exp, uint16_t resp
 	uint8_t bytes[3];
 	char *buf;
 	TRACE_MSG;
-
 	buf = (char *)malloc(resp_len * sizeof(char));
 	for(ct = 0; ct < 25; ct++) {
 		// Initiate the WR_RD operation
 		ser_cmd(fd, BP_SPI_WR_RD);
-
 		// Send the read/write length and command bytes
 		write_bytes = len; read_bytes = resp_len;
 		s2b(write_bytes, bytes);
 		ser_write(fd, (uint8_t *) bytes, 2);
 		s2b(read_bytes, bytes);
 		ser_write(fd, (uint8_t *) bytes, 2);
-
 		// Send the command
 		ser_write(fd, cmd, len);
 
@@ -438,7 +451,6 @@ void spi_write(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	uint16_t write_bytes, read_bytes;
 	uint8_t bytes[3];
 	TRACE_MSG;
-
 	// Set WREN to enable writing
 	bytes[0] = NRF24_SPI_WREN;
 	spi_cmd(fd, bytes, 1, "Enable Writing");
@@ -491,6 +503,7 @@ void read_hex(int fd, int ip, char *fn) {
 	spi_cmd(fd, cmd, 2, "FSR Register Write");
 
 	// Do the Read Operation
+	printf("starting read operation\n");
 	if(ip) 
 		read_bytes = NRF24_INFO_SZ;
 	else 
@@ -582,9 +595,16 @@ int write_hex(int fd, char *fn) {
 int main(int argc, char **argv) {
 	int fd;
 	TRACE_MSG;
+	if (argc == 0) {
+		printf("usage: nrfprog PORT [FILE]\n");
+		exit(1);
+	}
+
+	char *port = argv[1];
+	char *fname = argv[2];
 
 	printf("Opening the Bus Pirate UART\n");
-	fd = ser_open("/dev/ttyUSB0");
+	fd = ser_open(port);
 	
 	printf("Setting the Bus Pirate to Binary Mode\n");
 	ser_bp_bin(fd);
@@ -596,15 +616,15 @@ int main(int argc, char **argv) {
 	read_hex(fd, 1, "info_page.dat");
 
 	// Read/Write the Hex File, if requested
-	if(argc > 1) {
+	if(argc > 2) {
 		// If we can't open the file, we're reading out the memory contents into it
-		if(access(argv[1], R_OK)) {	
-			printf("Reading from the device to %s\n", argv[1]);
-			read_hex(fd, 0, argv[1]);
+		if(access(fname, R_OK)) {	
+			printf("Reading from the device to %s\n", fname);
+			read_hex(fd, 0, fname);
 		// Otherwise, write it out
 		} else {
-			printf("Writing %s to the device\n", argv[1]);
-			if(write_hex(fd, argv[1]) == 0)
+			printf("Writing %s to the device\n", fname);
+			if(write_hex(fd, fname) == 0)
 				printf("Write Verified\n");
 		}
 	}
