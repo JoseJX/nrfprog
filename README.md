@@ -3,7 +3,13 @@ This is a simple programmer for the nRF24LE1 using the Bus Pirate as the SPI
 device.
 
 ## building
-Type "make" to build the source.
+```
+make clean
+make
+```
+
+### debugging
+for debug build, use `DEBUG=1 make`
 
 ## usage
 `nrfprog PORT [filename]`
@@ -12,9 +18,6 @@ Running the program directly (./nrfprog) will dump the InfoPage. Put this some
 where safe, as this contains information unique to your nRF24LE1. Running the
 program, but passing a .hex file as a parameter will make the programmer write
 the .hex file to the device.
-
-## debugging
-for debug build, use `DEBUG=1 make`
 
 ## references
  * bus pirate binary modes: http://dangerousprototypes.com/docs/SPI_%28binary%29
