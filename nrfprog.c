@@ -105,7 +105,7 @@ void ser_cmd(int fd, int cmd) {
 #endif
 	ser_write(fd, &ccmd, 1);
 	// Delay for the hardware to respond
-	usleep(1000);
+	usleep(10000);
 	return;
 }
 
@@ -354,9 +354,9 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	printf("spi_read: %s\n", err);
 #endif
 	// Initiate the WR_RD operation
-	ser_cmd(fd, BP_SPI_CS(0));
-	ser_cmd(fd, BP_SPI_WR_RD_NO_CS);
-
+	//ser_cmd(fd, BP_SPI_CS(0));
+	//ser_cmd(fd, BP_SPI_WR_RD_NO_CS);
+	ser_cmd(fd, BP_SPI_WR_RD);
 	// Send the read/write length and command bytes
 	s2b(write_bytes, bytes);
 	ser_write(fd, (uint8_t *) bytes, 2);
@@ -368,11 +368,11 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	// Delay for the response
-	ser_cmd(fd, BP_SPI_CS(1));
-
-	check_resp(fd, "SPI Read CS");
+	//ser_cmd(fd, BP_SPI_CS(1));
 	usleep(200000); // wait for bp spi read to buffer
-	check_resp(fd, "SPI Read Start");
+
+	check_resp(fd, "SPI Read CMD");
+	//check_resp(fd, "SPI Read Start");
 
 #ifdef DEBUG_PRINT
 	printf("READ %i bytes\n", len);
@@ -382,7 +382,7 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 		while(read(fd, &(buf[pos]), 1) != 1) {
 			usleep(1000);
 			err_ct++;	
-			if(err_ct > 1) {
+			if(err_ct > 10) {
 				printf("Unable to read!\n");
 				break;
 			}
@@ -397,7 +397,7 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 #ifdef DEBUG_PRINT
 	printf("\n");
 #endif
-	check_resp(fd, "SPI Read Complete");
+	//check_resp(fd, "SPI Read Complete");
 
 
 	return;	
@@ -473,7 +473,8 @@ void spi_write(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	ser_write(fd, buf, len);
-	check_resp(fd, "SPI Write");
+	usleep(150000); // wait for bp buffer
+	check_resp(fd, "spi_write");
 
 	// Check that we've completed the write command
 	bytes[0] = NRF24_SPI_RDSR;
