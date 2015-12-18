@@ -350,7 +350,9 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	uint8_t bytes[3];
 	int pos, err_ct = 0;
 	TRACE_MSG;
+#ifdef DEBUG_PRINT	
 	printf("spi_read: %s\n", err);
+#endif
 	// Initiate the WR_RD operation
 	ser_cmd(fd, BP_SPI_CS(0));
 	ser_cmd(fd, BP_SPI_WR_RD_NO_CS);
@@ -369,7 +371,7 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	ser_cmd(fd, BP_SPI_CS(1));
 
 	check_resp(fd, "SPI Read CS");
-	usleep(200000); // wait for bp spi read buffer
+	usleep(200000); // wait for bp spi read to buffer
 	check_resp(fd, "SPI Read Start");
 
 #ifdef DEBUG_PRINT
@@ -595,7 +597,7 @@ int write_hex(int fd, char *fn) {
 int main(int argc, char **argv) {
 	int fd;
 	TRACE_MSG;
-	if (argc == 0) {
+	if (argc < 2) {
 		printf("usage: nrfprog PORT [FILE]\n");
 		exit(1);
 	}
