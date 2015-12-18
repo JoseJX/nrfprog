@@ -167,8 +167,7 @@ void check_resp(int fd, char *err) {
 	int ret, ct = 0;
 	uint8_t buf;
 	TRACE_MSG;
-	//tcdrain(fd);
-	///usleep(10);
+
 	// Check up to 25 times for a response
 	while(ct < 50) {
 		ret = read(fd, &buf, 1);
@@ -231,10 +230,6 @@ void ser_bp_spi_cfg(int fd) {
 		check_resp(fd, "SPI Turn on AUX pin");
 	}
 	
-	// Wait 15 seconds to set up the xprotolab
-	printf("Waiting to set up the XProtoLab\n");
-//	usleep(15000000);
-	usleep(3000000);
 	return;
 }
 
@@ -340,6 +335,7 @@ void spi_cmd(int fd, uint8_t *cmd, int cmd_len, char *err) {
 	s2b(read_bytes, b);
 	ser_write(fd, (uint8_t *) &b, 2);
 	ser_write(fd, cmd, write_bytes);
+	usleep(1000);
 	check_resp(fd, "SPI Command");
 	return;	
 }
@@ -354,8 +350,6 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	printf("spi_read: %s\n", err);
 #endif
 	// Initiate the WR_RD operation
-	//ser_cmd(fd, BP_SPI_CS(0));
-	//ser_cmd(fd, BP_SPI_WR_RD_NO_CS);
 	ser_cmd(fd, BP_SPI_WR_RD);
 	// Send the read/write length and command bytes
 	s2b(write_bytes, bytes);
@@ -368,11 +362,9 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	// Delay for the response
-	//ser_cmd(fd, BP_SPI_CS(1));
 	usleep(200000); // wait for bp spi read to buffer
 
-	check_resp(fd, "SPI Read CMD");
-	//check_resp(fd, "SPI Read Start");
+	check_resp(fd, "SPI Read Start");
 
 #ifdef DEBUG_PRINT
 	printf("READ %i bytes\n", len);
@@ -397,8 +389,6 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 #ifdef DEBUG_PRINT
 	printf("\n");
 #endif
-	//check_resp(fd, "SPI Read Complete");
-
 
 	return;	
 }
@@ -473,7 +463,7 @@ void spi_write(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	ser_write(fd, buf, len);
-	usleep(150000); // wait for bp buffer
+	usleep(200000); // wait for bp buffer
 	check_resp(fd, "spi_write");
 
 	// Check that we've completed the write command
@@ -579,6 +569,7 @@ int write_hex(int fd, char *fn) {
 	}
 
 	// Verfiy that the flash was performed correctly
+	printf("Verifying flash...\n");
 	result = 0;
 	for(pos = 0; pos < sz; pos++) {
 		if(data[pos] != verify_data[pos]) {
