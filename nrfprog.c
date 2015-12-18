@@ -563,13 +563,13 @@ int write_hex(int fd, char *fn) {
 	}
 
 	// Read out the data
+	printf("Verifying flash...\n");	
 	verify_data = (uint8_t *)calloc(sizeof(uint8_t), NRF24_FLASH_SZ);
 	for(pos=0; pos < sz; pos = pos + NRF24_BLOCK_SZ) {
 		spi_read(fd, &(verify_data[pos]), NRF24_BLOCK_SZ, pos, "Flash Read");
 	}
 
 	// Verfiy that the flash was performed correctly
-	printf("Verifying flash...\n");
 	result = 0;
 	for(pos = 0; pos < sz; pos++) {
 		if(data[pos] != verify_data[pos]) {
