@@ -20,8 +20,8 @@ DEBUG=1 make
 
 Running the program directly (./nrfprog) will dump the InfoPage. Put this some 
 where safe, as this contains information unique to your nRF24LE1. Running the
-program, but passing a .hex file as a parameter will make the programmer write
-the .hex file to the device.
+program, but passing a existing .hex file as a parameter will make the programmer write
+the .hex file to the device. If you pass in filename of non-existing file, nrfprog will attempt to read from chip into the file.
 
 ## hardware
 
