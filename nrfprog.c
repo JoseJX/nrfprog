@@ -105,7 +105,7 @@ void ser_cmd(int fd, int cmd) {
 #endif
 	ser_write(fd, &ccmd, 1);
 	// Delay for the hardware to respond
-	usleep(10000);
+	usleep(2000);
 	return;
 }
 
@@ -174,7 +174,7 @@ void check_resp(int fd, char *err) {
 		if(ret != -1)
 			break;
 		// If we didn't get any data, wait for 0.25s and try again
-		usleep(250000);
+		usleep(100000);
 		ct++;
 	}
 #ifdef DEBUG_PRINT
@@ -210,7 +210,7 @@ void ser_bp_spi_cfg(int fd) {
 	ret = read(fd, &buf, 4);
 	if(ret == 4 && strncmp(buf, BP_SPI_STRING, 4) == 0) {
 		// Set the SPI Speed to 30KHz
-		ser_cmd(fd, BP_SPI_SPEED(BP_SPI_SPEED_30K));
+		ser_cmd(fd, BP_SPI_SPEED(BP_SPI_SPEED_125K));
 		check_resp(fd, "SPI Set Speed");
 
 		// Set the SPI Configuration (pin output 3.3V, Clock Idle Phase Low, Clock Edge Active to Idle = 1), Sample Time Middle)
@@ -335,7 +335,7 @@ void spi_cmd(int fd, uint8_t *cmd, int cmd_len, char *err) {
 	s2b(read_bytes, b);
 	ser_write(fd, (uint8_t *) &b, 2);
 	ser_write(fd, cmd, write_bytes);
-	usleep(1000);
+	usleep(200);
 	check_resp(fd, "SPI Command");
 	return;	
 }
@@ -362,7 +362,7 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	// Delay for the response
-	usleep(200000); // wait for bp spi read to buffer
+	usleep(100000); // wait for bp spi read to buffer
 
 	check_resp(fd, "SPI Read Start");
 
@@ -372,7 +372,7 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	for(pos = 0; pos < len; pos++) {
 		err_ct = 0;
 		while(read(fd, &(buf[pos]), 1) != 1) {
-			usleep(1000);
+			usleep(200);
 			err_ct++;	
 			if(err_ct > 10) {
 				printf("Unable to read!\n");
@@ -420,7 +420,7 @@ void spi_wait(int fd, uint8_t *cmd, uint16_t len,  char *resp_exp, uint16_t resp
 		for(rd_ct=0; rd_ct < resp_len; rd_ct++) {
 			err_ct = 0;
 			while(read(fd, &(buf[rd_ct]), 1) != 1) {
-				usleep(1000);
+				usleep(200);
 				err_ct++;	
 				if(err_ct > 25) {
 					printf("Unable to read!\n");
@@ -463,7 +463,7 @@ void spi_write(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	ser_write(fd, buf, len);
-	usleep(200000); // wait for bp buffer
+	usleep(100000); // wait for bp buffer
 	check_resp(fd, "spi_write");
 
 	// Check that we've completed the write command
