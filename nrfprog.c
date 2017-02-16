@@ -168,13 +168,13 @@ void check_resp(int fd, char *err) {
 	uint8_t buf;
 	TRACE_MSG;
 
-	// Check up to 25 times for a response
-	while(ct < 50) {
+	// Check multiple times for a response
+	while(ct < 25) {
 		ret = read(fd, &buf, 1);
 		if(ret != -1)
 			break;
-		// If we didn't get any data, wait for 0.25s and try again
-		usleep(100000);
+		// If we didn't get any data, wait and try again
+		usleep(60000);
 		ct++;
 	}
 #ifdef DEBUG_PRINT
@@ -362,7 +362,7 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	// Delay for the response
-	usleep(100000); // wait for bp spi read to buffer
+	usleep(60000); // wait for bp spi read to buffer
 
 	check_resp(fd, "SPI Read Start");
 
@@ -463,7 +463,7 @@ void spi_write(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	ser_write(fd, buf, len);
-	usleep(100000); // wait for bp buffer
+	usleep(60000); // wait for bp buffer
 	check_resp(fd, "spi_write");
 
 	// Check that we've completed the write command
