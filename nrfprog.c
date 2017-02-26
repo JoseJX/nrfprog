@@ -26,7 +26,9 @@ int ser_open(char *port) {
 	TRACE_MSG;
 
 	// Open the port
-	fd = open(port, O_RDWR | O_NOCTTY | O_NDELAY);
+	//fd = open(port, O_RDWR | O_NOCTTY | O_NDELAY);
+	fd = open(port, O_RDWR | O_NOCTTY);
+
 	if(fd == -1) {
 		printf("Could not open the serial port: %s\n", port);
 		exit(-1);
@@ -72,15 +74,18 @@ void ser_write(int fd, uint8_t *stream, uint16_t sz) {
 	int ret, ct;
 	uint8_t c;
 	TRACE_MSG;
-	tcdrain(fd);
+	//tcdrain(fd);
 	// Write out one byte at a time
 #ifdef DEBUG_PRINT
 		printf("ser_write: ");
 #endif	
 	for(ct=0; ct<sz; ct++) {
 #ifdef DEBUG_PRINT
-		printf("0x%02X ", stream[ct]);
+		if (ct%16==0)
+			printf("\n");
+		printf("%02X ", stream[ct]);
 #endif
+		/*
 		c = stream[ct];
 		ret = write(fd, &c, 1);
 		if(ret != 1) {
@@ -88,11 +93,19 @@ void ser_write(int fd, uint8_t *stream, uint16_t sz) {
 			close(fd);
 			exit(-1);
 		}
+		*/	
 	}
+	c = stream[ct];
+	ret = write(fd, stream, sz);
+	if(ret != sz) {
+		printf("Unable to write to the port!\n");
+		close(fd);
+		exit(-1);
+	}
+	tcdrain(fd);
 #ifdef DEBUG_PRINT
 	printf("\n");
 #endif
-	tcdrain(fd);
 	return;
 }
 
@@ -167,18 +180,18 @@ void check_resp(int fd, char *err) {
 	int ret, ct = 0;
 	uint8_t buf;
 	TRACE_MSG;
-
+	//tcdrain(fd);
 	// Check multiple times for a response
 	while(ct < 25) {
 		ret = read(fd, &buf, 1);
 		if(ret != -1)
 			break;
 		// If we didn't get any data, wait and try again
-		usleep(60000);
+		usleep(50000);
 		ct++;
 	}
 #ifdef DEBUG_PRINT
-	printf("check_resp: 0x%X (%c)\n", buf, buf);
+	printf("check_resp: 0x%X\n", buf);
 #endif
 	if(buf != BP_RESP_SUCCESS) {
 		// Try to set the bus pirate back to normal mode
@@ -347,7 +360,7 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	int pos, err_ct = 0;
 	TRACE_MSG;
 #ifdef DEBUG_PRINT	
-	printf("spi_read: %s\n", err);
+	printf("spi_read: %s, len: %02X, start: %02X\n", err, len, start_addr);
 #endif
 	// Initiate the WR_RD operation
 	ser_cmd(fd, BP_SPI_WR_RD);
@@ -362,7 +375,7 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	// Delay for the response
-	usleep(60000); // wait for bp spi read to buffer
+	usleep(1000); // wait for bp spi read to buffer
 
 	check_resp(fd, "SPI Read Start");
 
@@ -463,7 +476,7 @@ void spi_write(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	ser_write(fd, buf, len);
-	usleep(60000); // wait for bp buffer
+	//usleep(60000); // wait for bp buffer
 	check_resp(fd, "spi_write");
 
 	// Check that we've completed the write command
@@ -502,8 +515,8 @@ void read_hex(int fd, int ip, char *fn) {
 	else 
 		read_bytes = NRF24_FLASH_SZ;
 
-	for(pos=0; pos < read_bytes; pos = pos + NRF24_BLOCK_SZ) 
-		spi_read(fd, &(bytes[pos]), NRF24_BLOCK_SZ, pos, "Flash Read");
+	for(pos=0; pos < read_bytes; pos = pos + NRF24_PAGE_SZ) 
+		spi_read(fd, &(bytes[pos]), NRF24_PAGE_SZ, pos, "Flash Read");
 
 	// Open the output file
 	fout = open(fn, O_RDWR | O_CREAT, 0666);
@@ -542,31 +555,36 @@ int write_hex(int fd, char *fn) {
 	cmd_bytes[1] = 0x00;
 	spi_cmd(fd, cmd_bytes, 2, "Set INFEN");
 
-	// Write the data by 1024 byte blocks
-	for(pos = 0; pos < sz; pos = pos + NRF24_BLOCK_SZ) {
+	// erase and write the data pages
+	for(pos = 0; pos < sz; pos = pos + NRF24_PAGE_SZ) {
 		// Set WREN to enable writing
 		cmd_bytes[0] = NRF24_SPI_WREN;
 		spi_cmd(fd, cmd_bytes, 1, "Enable Writing");
 
 		// Next, we erase the block we're overwriting
 		cmd_bytes[0] = NRF24_SPI_ERASE_PAGE;
-		cmd_bytes[1] = pos / NRF24_BLOCK_SZ;
+		cmd_bytes[1] = pos / NRF24_PAGE_SZ;
 		spi_cmd(fd, cmd_bytes, 2, "Erase Page");
-	
+
 		// Check that we've completed the erase command
 		cmd_bytes[0] = NRF24_SPI_RDSR;
 		result = 0;
 		spi_wait(fd, cmd_bytes, 1,  &result, 1, "Waiting for the erase to complete");
-
 		// Write the data
-		spi_write(fd, &(data[pos]), NRF24_BLOCK_SZ, pos, "Writing to Flash");
+		//spi_write(fd, &(data[pos]), NRF24_PAGE_SZ, pos, "Writing to Flash");
+		
 	}
+	// do write separately. nrf24lu1 can only handle max 256 bytes PROGRAM cmd, nrf24le1 can handle 1024
+	for(pos = 0; pos < sz; pos = pos + NRF24_PAGE_SZ/2)
+		spi_write(fd, &(data[pos]), NRF24_PAGE_SZ/2, pos, "Writing to Flash");
+
+
 
 	// Read out the data
 	printf("Verifying flash...\n");	
-	verify_data = (uint8_t *)calloc(sizeof(uint8_t), NRF24_FLASH_SZ);
-	for(pos=0; pos < sz; pos = pos + NRF24_BLOCK_SZ) {
-		spi_read(fd, &(verify_data[pos]), NRF24_BLOCK_SZ, pos, "Flash Read");
+	verify_data = (uint8_t *)calloc(sizeof(uint8_t), 8*NRF24_FLASH_SZ);
+	for(pos=0; pos < sz; pos = pos + 8*NRF24_PAGE_SZ) {
+		spi_read(fd, &(verify_data[pos]), 8*NRF24_PAGE_SZ, pos, "Flash Read");
 	}
 
 	// Verfiy that the flash was performed correctly

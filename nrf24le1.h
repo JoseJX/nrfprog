@@ -4,7 +4,7 @@
 
 #define NRF24_BLOCK_SZ		(512)
 #define NRF24_FLASH_SZ		(32*NRF24_BLOCK_SZ)
-#define NRF24_INFO_SZ		(256)
+#define NRF24_INFO_SZ		(512)
 
 #define NRF24_SPI_WRSR		(0x01)
 #define NRF24_SPI_PROGRAM	(0x02)
