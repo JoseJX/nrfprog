@@ -215,10 +215,11 @@ void ser_bp_spi_cfg(int fd) {
 	char buf[5];
 	TRACE_MSG;
 	memset(buf, 0, 5);
-
+	// clear serial buffers from buspirate reset
+	tcflush(fd, TCIOFLUSH);
 	// Go to SPI Mode	
 	ser_cmd(fd, BP_SPI);
-
+	usleep(10000);
 	// Check that we're in SPI Mode
 	ret = read(fd, &buf, 4);
 	if(ret == 4 && strncmp(buf, BP_SPI_STRING, 4) == 0) {
