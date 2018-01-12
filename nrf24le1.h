@@ -2,8 +2,8 @@
 #define __NRF24LE1_H_
 
 
-#define NRF24_BLOCK_SZ		(512)
-#define NRF24_FLASH_SZ		(32*NRF24_BLOCK_SZ)
+#define NRF24_PAGE_SZ		(512)
+#define NRF24_FLASH_SZ		(32*NRF24_PAGE_SZ)
 #define NRF24_INFO_SZ		(512)
 
 #define NRF24_SPI_WRSR		(0x01)
