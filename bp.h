@@ -35,6 +35,7 @@
 		#define BP_SPI_CFG_CKE		0x02
 		#define BP_SPI_CFG_SMP		0x01
 	#define BP_SPI_WR_RD 		0x04
+	#define BP_SPI_WR_RD_NO_CS 		0x05
 
 #define BP_I2C		0x02
 #define BP_UART		0x03

@@ -26,7 +26,9 @@ int ser_open(char *port) {
 	TRACE_MSG;
 
 	// Open the port
-	fd = open(port, O_RDWR | O_NOCTTY | O_NDELAY);
+	//fd = open(port, O_RDWR | O_NOCTTY | O_NDELAY);
+	fd = open(port, O_RDWR | O_NOCTTY);
+
 	if(fd == -1) {
 		printf("Could not open the serial port: %s\n", port);
 		exit(-1);
@@ -56,6 +58,8 @@ int ser_open(char *port) {
 	cfg.c_oflag &= ~OPOST;
 	// Disable Software Flow Control
 	cfg.c_iflag &= ~(IXON | IXOFF | IXANY);
+	//cfg.c_cc[VMIN]  = 1;            // read blocking
+	//cfg.c_cc[VTIME] = 1;            // timeout	
 	// Send the config to the port
 	tcsetattr(fd, TCSANOW, &cfg);
 	return fd;
@@ -72,12 +76,18 @@ void ser_write(int fd, uint8_t *stream, uint16_t sz) {
 	int ret, ct;
 	uint8_t c;
 	TRACE_MSG;
-
+	//tcdrain(fd);
 	// Write out one byte at a time
+#ifdef DEBUG_PRINT
+		printf("ser_write: ");
+#endif	
 	for(ct=0; ct<sz; ct++) {
 #ifdef DEBUG_PRINT
-		printf("0x%02X ", stream[ct]);
+		if (ct%16==0)
+			printf("\n");
+		printf("%02X ", stream[ct]);
 #endif
+		/*
 		c = stream[ct];
 		ret = write(fd, &c, 1);
 		if(ret != 1) {
@@ -85,7 +95,16 @@ void ser_write(int fd, uint8_t *stream, uint16_t sz) {
 			close(fd);
 			exit(-1);
 		}
+		*/	
 	}
+	c = stream[ct];
+	ret = write(fd, stream, sz);
+	if(ret != sz) {
+		printf("Unable to write to the port!\n");
+		close(fd);
+		exit(-1);
+	}
+	tcdrain(fd);
 #ifdef DEBUG_PRINT
 	printf("\n");
 #endif
@@ -96,9 +115,12 @@ void ser_write(int fd, uint8_t *stream, uint16_t sz) {
 void ser_cmd(int fd, int cmd) {
 	uint8_t ccmd = cmd;	
 	TRACE_MSG;
+#ifdef DEBUG_PRINT
+	printf("bp_cmd: 0x%02X\n", ccmd);
+#endif
 	ser_write(fd, &ccmd, 1);
 	// Delay for the hardware to respond
-	usleep(10000);
+	usleep(1000);
 	return;
 }
 
@@ -108,23 +130,30 @@ void ser_bp_bin(int fd) {
 	char buf[6];
 	TRACE_MSG;
 	memset(buf, 0, 6);
-
+	usleep(10000);
+	tcflush(fd, TCIOFLUSH);
 	// We try up to 25 times to make it work
-	for(count=0; count < 25; count++) {
+	for(count=0; count < 21; count++) {
 		ser_cmd(fd, BP_BIN_RESET);
 		ret = read(fd, buf, 5);
+		usleep(1000);
 #ifdef DEBUG_PRINT
 		int tmp;
 		printf("sz: %i\n", ret);
 		for(tmp=0; tmp<ret; tmp++)
-			printf("0x%X %c\n", buf[tmp], buf[tmp]);
+			printf("0x%X %c ", buf[tmp], buf[tmp]);
+		printf("\n");
 #endif
 		if(ret == 5 && strncmp(buf, BP_BINARY_STRING, 5) == 0) {
 			// In binary mode!
+#ifdef DEBUG_PRINT			
+			printf("bp in binary mode.\n");
+#endif			
 			return;
 		}
 	}
 	printf("Unable to put Bus Pirate in Binary Mode!\n");
+	ser_close(fd);
 	exit(-1);
 }
 
@@ -133,15 +162,13 @@ void ser_bp_exit_bin(int fd) {
 	int ret, count;
 	uint8_t buf;
 	TRACE_MSG;
-
 	// Make sure we're in the BBIO and not anywhere else
 	ser_bp_bin(fd);
-
 	// Reset to normal mode
 	for(count=0; count<25; count++) {
 		// Reset the BP
-		ser_cmd(fd, BP_RESET);
 
+		ser_cmd(fd, BP_RESET);
 		// Check that we got the reset response
 		ret = read(fd, &buf, 1);
 #ifdef DEBUG_PRINT
@@ -160,30 +187,30 @@ void check_resp(int fd, char *err) {
 	int ret, ct = 0;
 	uint8_t buf;
 	TRACE_MSG;
-
-	// Check up to 25 times for a response
+	tcdrain(fd);
+	// Check multiple times for a response
 	while(ct < 25) {
 		ret = read(fd, &buf, 1);
 		if(ret != -1)
 			break;
-		// If we didn't get any data, wait for 0.25s and try again
-		usleep(250000);
+		// If we didn't get any data, wait and try again
+		usleep(50000);
 		ct++;
 	}
 #ifdef DEBUG_PRINT
-	printf("Response: 0x%X (%c)\n", buf, buf);
+	printf("check_resp: 0x%X\n", buf);
 #endif
 	if(buf != BP_RESP_SUCCESS) {
 		// Try to set the bus pirate back to normal mode
+		printf("check_resp: %s failed\nSetting BP back to normal.\n", err);
 		ser_bp_exit_bin(fd);
 		// Close the connection
 		ser_close(fd);
-		printf("%s failed\n", err);
 		exit(-1);
 	} 
-#ifdef DEBUF_PRINT
+#ifdef DEBUG_PRINT
 	else {
-		printf("%s succeeded\n", err);
+		printf("check_resp: %s succeeded\n", err);
 	}
 #endif
 	return;
@@ -195,19 +222,21 @@ void ser_bp_spi_cfg(int fd) {
 	char buf[5];
 	TRACE_MSG;
 	memset(buf, 0, 5);
-
+	// clear serial buffers from buspirate reset
+	usleep(10000);
+	tcflush(fd, TCIOFLUSH);
 	// Go to SPI Mode	
 	ser_cmd(fd, BP_SPI);
-
+	usleep(10000);
 	// Check that we're in SPI Mode
 	ret = read(fd, &buf, 4);
 	if(ret == 4 && strncmp(buf, BP_SPI_STRING, 4) == 0) {
 		// Set the SPI Speed to 30KHz
-		ser_cmd(fd, BP_SPI_SPEED(BP_SPI_SPEED_30K));
+		ser_cmd(fd, BP_SPI_SPEED(BP_SPI_SPEED_125K));
 		check_resp(fd, "SPI Set Speed");
 
-		// Set the SPI Configuration (pin output 3.3V, Clock Idle Phase Low, Clock Edge Active to Idle = 1), Sample Time Middle)
-		ser_cmd(fd, BP_SPI_CFG((BP_SPI_CFG_3v3 | BP_SPI_CFG_CKE)));
+		// Set the SPI Configuration (pin output 3.3V, Clock Idle Phase Low, Clock Edge Active to Idle = 0), Sample Time Middle)
+		ser_cmd(fd, BP_SPI_CFG((BP_SPI_CFG_3v3 )));
 		check_resp(fd, "SPI Configuration");
 
 		// Turn on the power and AUX Pins
@@ -219,15 +248,16 @@ void ser_bp_spi_cfg(int fd) {
 		check_resp(fd, "SPI Turn off the AUX pin");
 	
 		// Turn on the AUX pin to release the chip from reset
-		ser_cmd(fd, BP_SPI_PERF((BP_SPI_PERF_POWER | BP_SPI_PERF_AUX)));
+		ser_cmd(fd, BP_SPI_PERF((BP_SPI_PERF_POWER | BP_SPI_PERF_AUX | BP_SPI_PERF_CS)));
 		check_resp(fd, "SPI Turn on AUX pin");
+
+		return;
+	} else {
+		printf("ret: %X, buf: %.4s\n", ret, buf);
+		printf("ERROR. could not put BP into SPI mode.\n");
+		ser_close(fd);
+		exit(-2);
 	}
-	
-	// Wait 15 seconds to set up the xprotolab
-	printf("Waiting to set up the XProtoLab\n");
-//	usleep(15000000);
-	usleep(3000000);
-	return;
 }
 
 /* Load a hex file */
@@ -322,7 +352,6 @@ void spi_cmd(int fd, uint8_t *cmd, int cmd_len, char *err) {
 	uint16_t write_bytes, read_bytes;
 	uint8_t b[2];
 	TRACE_MSG;
-	
 	// Initiate the WR_RD operation
 	ser_cmd(fd, BP_SPI_WR_RD);	
 
@@ -333,6 +362,7 @@ void spi_cmd(int fd, uint8_t *cmd, int cmd_len, char *err) {
 	s2b(read_bytes, b);
 	ser_write(fd, (uint8_t *) &b, 2);
 	ser_write(fd, cmd, write_bytes);
+	usleep(200);
 	check_resp(fd, "SPI Command");
 	return;	
 }
@@ -343,10 +373,11 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	uint8_t bytes[3];
 	int pos, err_ct = 0;
 	TRACE_MSG;
-	
+#ifdef DEBUG_PRINT	
+	printf("spi_read: %s, len: %02X, start: %02X\n", err, len, start_addr);
+#endif
 	// Initiate the WR_RD operation
 	ser_cmd(fd, BP_SPI_WR_RD);
-
 	// Send the read/write length and command bytes
 	s2b(write_bytes, bytes);
 	ser_write(fd, (uint8_t *) bytes, 2);
@@ -358,24 +389,28 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	// Delay for the response
-	check_resp(fd, "SPI Read");
-	
-	// Read in the data
+	usleep(1000); // wait for bp spi read to buffer
+
+	check_resp(fd, "SPI Read Start");
+
 #ifdef DEBUG_PRINT
 	printf("READ %i bytes\n", len);
 #endif
 	for(pos = 0; pos < len; pos++) {
 		err_ct = 0;
 		while(read(fd, &(buf[pos]), 1) != 1) {
-			usleep(1000);
+			usleep(400);
 			err_ct++;	
-			if(err_ct > 25) {
+			if(err_ct > 20) {
 				printf("Unable to read!\n");
 				break;
 			}
 		}
 #ifdef DEBUG_PRINT
-		printf("0x%02X ", buf[pos]);
+		printf("%02X ", buf[pos]);
+		if (pos % 16 == 15) {
+			printf("\n");
+		}
 #endif
 	}
 #ifdef DEBUG_PRINT
@@ -392,19 +427,16 @@ void spi_wait(int fd, uint8_t *cmd, uint16_t len,  char *resp_exp, uint16_t resp
 	uint8_t bytes[3];
 	char *buf;
 	TRACE_MSG;
-
 	buf = (char *)malloc(resp_len * sizeof(char));
 	for(ct = 0; ct < 25; ct++) {
 		// Initiate the WR_RD operation
 		ser_cmd(fd, BP_SPI_WR_RD);
-
 		// Send the read/write length and command bytes
 		write_bytes = len; read_bytes = resp_len;
 		s2b(write_bytes, bytes);
 		ser_write(fd, (uint8_t *) bytes, 2);
 		s2b(read_bytes, bytes);
 		ser_write(fd, (uint8_t *) bytes, 2);
-
 		// Send the command
 		ser_write(fd, cmd, len);
 
@@ -415,7 +447,7 @@ void spi_wait(int fd, uint8_t *cmd, uint16_t len,  char *resp_exp, uint16_t resp
 		for(rd_ct=0; rd_ct < resp_len; rd_ct++) {
 			err_ct = 0;
 			while(read(fd, &(buf[rd_ct]), 1) != 1) {
-				usleep(1000);
+				usleep(400);
 				err_ct++;	
 				if(err_ct > 25) {
 					printf("Unable to read!\n");
@@ -438,7 +470,6 @@ void spi_write(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	uint16_t write_bytes, read_bytes;
 	uint8_t bytes[3];
 	TRACE_MSG;
-
 	// Set WREN to enable writing
 	bytes[0] = NRF24_SPI_WREN;
 	spi_cmd(fd, bytes, 1, "Enable Writing");
@@ -459,7 +490,8 @@ void spi_write(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	s2b(start_addr, bytes);
 	ser_write(fd, bytes, 2);
 	ser_write(fd, buf, len);
-	check_resp(fd, "SPI Write");
+	//usleep(60000); // wait for bp buffer
+	check_resp(fd, "spi_write");
 
 	// Check that we've completed the write command
 	bytes[0] = NRF24_SPI_RDSR;
@@ -491,13 +523,14 @@ void read_hex(int fd, int ip, char *fn) {
 	spi_cmd(fd, cmd, 2, "FSR Register Write");
 
 	// Do the Read Operation
+	printf("starting read operation\n");
 	if(ip) 
 		read_bytes = NRF24_INFO_SZ;
 	else 
 		read_bytes = NRF24_FLASH_SZ;
 
-	for(pos=0; pos < read_bytes; pos = pos + NRF24_BLOCK_SZ) 
-		spi_read(fd, &(bytes[pos]), NRF24_BLOCK_SZ, pos, "Flash Read");
+	for(pos=0; pos < read_bytes; pos = pos + NRF24_PAGE_SZ) 
+		spi_read(fd, &(bytes[pos]), NRF24_PAGE_SZ, pos, "Flash Read");
 
 	// Open the output file
 	fout = open(fn, O_RDWR | O_CREAT, 0666);
@@ -536,32 +569,49 @@ int write_hex(int fd, char *fn) {
 	cmd_bytes[1] = 0x00;
 	spi_cmd(fd, cmd_bytes, 2, "Set INFEN");
 
-	// Write the data by 1024 byte blocks
-	for(pos = 0; pos < sz; pos = pos + NRF24_BLOCK_SZ) {
+	// erase and write the data pages
+	printf(" erasing: ");
+	for(pos = 0; pos < sz; pos += NRF24_PAGE_SZ) {
 		// Set WREN to enable writing
 		cmd_bytes[0] = NRF24_SPI_WREN;
 		spi_cmd(fd, cmd_bytes, 1, "Enable Writing");
 
 		// Next, we erase the block we're overwriting
 		cmd_bytes[0] = NRF24_SPI_ERASE_PAGE;
-		cmd_bytes[1] = pos / NRF24_BLOCK_SZ;
+		cmd_bytes[1] = pos / NRF24_PAGE_SZ;
 		spi_cmd(fd, cmd_bytes, 2, "Erase Page");
-	
+
 		// Check that we've completed the erase command
 		cmd_bytes[0] = NRF24_SPI_RDSR;
 		result = 0;
 		spi_wait(fd, cmd_bytes, 1,  &result, 1, "Waiting for the erase to complete");
-
 		// Write the data
-		spi_write(fd, &(data[pos]), NRF24_BLOCK_SZ, pos, "Writing to Flash");
+		//spi_write(fd, &(data[pos]), NRF24_PAGE_SZ, pos, "Writing to Flash");
+		printf(".."); fflush(stdout);
+		
 	}
-
+	printf("\n");
+	//sleep(1);
+	// do write separately. nrf24lu1 can only handle max 256 bytes PROGRAM cmd, nrf24le1 can handle 1024
+	printf(" writing: ");
+	for(pos = 0; pos < sz; pos += NRF24_PAGE_SZ/2) {
+		spi_write(fd, &(data[pos]), NRF24_PAGE_SZ/2, pos, "Writing to Flash");
+		printf("."); fflush(stdout);
+	}
+	printf("\n");
 	// Read out the data
+	printf("Verifying flash.\n");	
+	printf(" reading: ");
 	verify_data = (uint8_t *)calloc(sizeof(uint8_t), NRF24_FLASH_SZ);
-	for(pos=0; pos < sz; pos = pos + NRF24_BLOCK_SZ) {
-		spi_read(fd, &(verify_data[pos]), NRF24_BLOCK_SZ, pos, "Flash Read");
+	for(pos=0; pos < sz; pos += NRF24_PAGE_SZ) {
+		if ((sz - pos) > NRF24_PAGE_SZ)
+			spi_read(fd, &(verify_data[pos]), NRF24_PAGE_SZ, pos, "Flash Read");
+		else
+			spi_read(fd, &(verify_data[pos]), (sz - pos), pos, "Flash Read");
+		printf(".."); fflush(stdout);
 	}
-
+	printf("\n");
+	printf(" checking data...\n");
 	// Verfiy that the flash was performed correctly
 	result = 0;
 	for(pos = 0; pos < sz; pos++) {
@@ -582,9 +632,16 @@ int write_hex(int fd, char *fn) {
 int main(int argc, char **argv) {
 	int fd;
 	TRACE_MSG;
+	if (argc < 2) {
+		printf("usage: nrfprog PORT [FILE]\n");
+		exit(1);
+	}
+
+	char *port = argv[1];
+	char *fname = argv[2];
 
 	printf("Opening the Bus Pirate UART\n");
-	fd = ser_open("/dev/ttyUSB0");
+	fd = ser_open(port);
 	
 	printf("Setting the Bus Pirate to Binary Mode\n");
 	ser_bp_bin(fd);
@@ -596,16 +653,16 @@ int main(int argc, char **argv) {
 	read_hex(fd, 1, "info_page.dat");
 
 	// Read/Write the Hex File, if requested
-	if(argc > 1) {
+	if(argc > 2) {
 		// If we can't open the file, we're reading out the memory contents into it
-		if(access(argv[1], R_OK)) {	
-			printf("Reading from the device to %s\n", argv[1]);
-			read_hex(fd, 0, argv[1]);
+		if(access(fname, R_OK)) {	
+			printf("Reading from the device to %s\n", fname);
+			read_hex(fd, 0, fname);
 		// Otherwise, write it out
 		} else {
-			printf("Writing %s to the device\n", argv[1]);
-			if(write_hex(fd, argv[1]) == 0)
-				printf("Write Verified\n");
+			printf("Writing %s to the device\n", fname);
+			if(write_hex(fd, fname) == 0)
+				printf("Write Verified: OK\n");
 		}
 	}
 
