@@ -58,6 +58,8 @@ int ser_open(char *port) {
 	cfg.c_oflag &= ~OPOST;
 	// Disable Software Flow Control
 	cfg.c_iflag &= ~(IXON | IXOFF | IXANY);
+	//cfg.c_cc[VMIN]  = 1;            // read blocking
+	//cfg.c_cc[VTIME] = 1;            // timeout	
 	// Send the config to the port
 	tcsetattr(fd, TCSANOW, &cfg);
 	return fd;
@@ -114,11 +116,11 @@ void ser_cmd(int fd, int cmd) {
 	uint8_t ccmd = cmd;	
 	TRACE_MSG;
 #ifdef DEBUG_PRINT
-	printf("bp_cmd: ");
+	printf("bp_cmd: 0x%02X\n", ccmd);
 #endif
 	ser_write(fd, &ccmd, 1);
 	// Delay for the hardware to respond
-	usleep(2000);
+	usleep(1000);
 	return;
 }
 
@@ -128,23 +130,30 @@ void ser_bp_bin(int fd) {
 	char buf[6];
 	TRACE_MSG;
 	memset(buf, 0, 6);
-
+	usleep(10000);
+	tcflush(fd, TCIOFLUSH);
 	// We try up to 25 times to make it work
-	for(count=0; count < 25; count++) {
+	for(count=0; count < 21; count++) {
 		ser_cmd(fd, BP_BIN_RESET);
 		ret = read(fd, buf, 5);
+		usleep(1000);
 #ifdef DEBUG_PRINT
 		int tmp;
 		printf("sz: %i\n", ret);
 		for(tmp=0; tmp<ret; tmp++)
-			printf("0x%X %c\n", buf[tmp], buf[tmp]);
+			printf("0x%X %c ", buf[tmp], buf[tmp]);
+		printf("\n");
 #endif
 		if(ret == 5 && strncmp(buf, BP_BINARY_STRING, 5) == 0) {
 			// In binary mode!
+#ifdef DEBUG_PRINT			
+			printf("bp in binary mode.\n");
+#endif			
 			return;
 		}
 	}
 	printf("Unable to put Bus Pirate in Binary Mode!\n");
+	ser_close(fd);
 	exit(-1);
 }
 
@@ -155,12 +164,10 @@ void ser_bp_exit_bin(int fd) {
 	TRACE_MSG;
 	// Make sure we're in the BBIO and not anywhere else
 	ser_bp_bin(fd);
-
 	// Reset to normal mode
 	for(count=0; count<25; count++) {
 		// Reset the BP
-		tcdrain(fd);
-		tcflush(fd, TCIOFLUSH);
+
 		ser_cmd(fd, BP_RESET);
 		// Check that we got the reset response
 		ret = read(fd, &buf, 1);
@@ -180,7 +187,7 @@ void check_resp(int fd, char *err) {
 	int ret, ct = 0;
 	uint8_t buf;
 	TRACE_MSG;
-	//tcdrain(fd);
+	tcdrain(fd);
 	// Check multiple times for a response
 	while(ct < 25) {
 		ret = read(fd, &buf, 1);
@@ -216,6 +223,7 @@ void ser_bp_spi_cfg(int fd) {
 	TRACE_MSG;
 	memset(buf, 0, 5);
 	// clear serial buffers from buspirate reset
+	usleep(10000);
 	tcflush(fd, TCIOFLUSH);
 	// Go to SPI Mode	
 	ser_cmd(fd, BP_SPI);
@@ -227,8 +235,8 @@ void ser_bp_spi_cfg(int fd) {
 		ser_cmd(fd, BP_SPI_SPEED(BP_SPI_SPEED_125K));
 		check_resp(fd, "SPI Set Speed");
 
-		// Set the SPI Configuration (pin output 3.3V, Clock Idle Phase Low, Clock Edge Active to Idle = 1), Sample Time Middle)
-		ser_cmd(fd, BP_SPI_CFG((BP_SPI_CFG_3v3 | BP_SPI_CFG_CKE)));
+		// Set the SPI Configuration (pin output 3.3V, Clock Idle Phase Low, Clock Edge Active to Idle = 0), Sample Time Middle)
+		ser_cmd(fd, BP_SPI_CFG((BP_SPI_CFG_3v3 )));
 		check_resp(fd, "SPI Configuration");
 
 		// Turn on the power and AUX Pins
@@ -242,9 +250,14 @@ void ser_bp_spi_cfg(int fd) {
 		// Turn on the AUX pin to release the chip from reset
 		ser_cmd(fd, BP_SPI_PERF((BP_SPI_PERF_POWER | BP_SPI_PERF_AUX | BP_SPI_PERF_CS)));
 		check_resp(fd, "SPI Turn on AUX pin");
+
+		return;
+	} else {
+		printf("ret: %X, buf: %.4s\n", ret, buf);
+		printf("ERROR. could not put BP into SPI mode.\n");
+		ser_close(fd);
+		exit(-2);
 	}
-	
-	return;
 }
 
 /* Load a hex file */
@@ -386,9 +399,9 @@ void spi_read(int fd, uint8_t *buf, uint16_t len, int start_addr, char *err) {
 	for(pos = 0; pos < len; pos++) {
 		err_ct = 0;
 		while(read(fd, &(buf[pos]), 1) != 1) {
-			usleep(200);
+			usleep(400);
 			err_ct++;	
-			if(err_ct > 10) {
+			if(err_ct > 20) {
 				printf("Unable to read!\n");
 				break;
 			}
@@ -434,7 +447,7 @@ void spi_wait(int fd, uint8_t *cmd, uint16_t len,  char *resp_exp, uint16_t resp
 		for(rd_ct=0; rd_ct < resp_len; rd_ct++) {
 			err_ct = 0;
 			while(read(fd, &(buf[rd_ct]), 1) != 1) {
-				usleep(200);
+				usleep(400);
 				err_ct++;	
 				if(err_ct > 25) {
 					printf("Unable to read!\n");
@@ -557,7 +570,8 @@ int write_hex(int fd, char *fn) {
 	spi_cmd(fd, cmd_bytes, 2, "Set INFEN");
 
 	// erase and write the data pages
-	for(pos = 0; pos < sz; pos = pos + NRF24_PAGE_SZ) {
+	printf(" erasing: ");
+	for(pos = 0; pos < sz; pos += NRF24_PAGE_SZ) {
 		// Set WREN to enable writing
 		cmd_bytes[0] = NRF24_SPI_WREN;
 		spi_cmd(fd, cmd_bytes, 1, "Enable Writing");
@@ -573,21 +587,31 @@ int write_hex(int fd, char *fn) {
 		spi_wait(fd, cmd_bytes, 1,  &result, 1, "Waiting for the erase to complete");
 		// Write the data
 		//spi_write(fd, &(data[pos]), NRF24_PAGE_SZ, pos, "Writing to Flash");
+		printf(".."); fflush(stdout);
 		
 	}
+	printf("\n");
+	//sleep(1);
 	// do write separately. nrf24lu1 can only handle max 256 bytes PROGRAM cmd, nrf24le1 can handle 1024
-	for(pos = 0; pos < sz; pos = pos + NRF24_PAGE_SZ/2)
+	printf(" writing: ");
+	for(pos = 0; pos < sz; pos += NRF24_PAGE_SZ/2) {
 		spi_write(fd, &(data[pos]), NRF24_PAGE_SZ/2, pos, "Writing to Flash");
-
-
-
-	// Read out the data
-	printf("Verifying flash...\n");	
-	verify_data = (uint8_t *)calloc(sizeof(uint8_t), 8*NRF24_FLASH_SZ);
-	for(pos=0; pos < sz; pos = pos + 8*NRF24_PAGE_SZ) {
-		spi_read(fd, &(verify_data[pos]), 8*NRF24_PAGE_SZ, pos, "Flash Read");
+		printf("."); fflush(stdout);
 	}
-
+	printf("\n");
+	// Read out the data
+	printf("Verifying flash.\n");	
+	printf(" reading: ");
+	verify_data = (uint8_t *)calloc(sizeof(uint8_t), NRF24_FLASH_SZ);
+	for(pos=0; pos < sz; pos += NRF24_PAGE_SZ) {
+		if ((sz - pos) > NRF24_PAGE_SZ)
+			spi_read(fd, &(verify_data[pos]), NRF24_PAGE_SZ, pos, "Flash Read");
+		else
+			spi_read(fd, &(verify_data[pos]), (sz - pos), pos, "Flash Read");
+		printf(".."); fflush(stdout);
+	}
+	printf("\n");
+	printf(" checking data...\n");
 	// Verfiy that the flash was performed correctly
 	result = 0;
 	for(pos = 0; pos < sz; pos++) {
@@ -638,7 +662,7 @@ int main(int argc, char **argv) {
 		} else {
 			printf("Writing %s to the device\n", fname);
 			if(write_hex(fd, fname) == 0)
-				printf("Write Verified\n");
+				printf("Write Verified: OK\n");
 		}
 	}
 

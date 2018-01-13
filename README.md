@@ -1,5 +1,5 @@
-# BusPirate NRF24LE1 programmer
-This is a simple programmer for the nRF24LE1 using the Bus Pirate as the SPI
+# BusPirate NRF24LE1/NRF24LU1+ programmer
+This is a simple programmer for the nRF24LE1 (or nRF24LU1p) using the Bus Pirate as the SPI
 device.
 
 ## building
